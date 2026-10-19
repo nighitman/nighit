@@ -80,6 +80,23 @@ bot_pid() {
     pgrep -f '^python3 /workspace/scripts/telegram-bot\.py$' 2>/dev/null | head -n 1
 }
 
+argo_pid() {
+    pgrep -f '^bash /workspace/scripts/argo-node\.sh$' 2>/dev/null | head -n 1
+}
+
+start_argo() {
+    setsid nohup "$SCRIPT_DIR/argo-node.sh" >/dev/null 2>&1 < /dev/null &
+    sleep 2
+    local pid
+    pid="$(argo_pid)"
+    if [ -z "$pid" ]; then
+        log "argo-node restart failed"
+        return 1
+    fi
+    log "argo-node restarted (PID $pid)"
+    notify argo "🔄 Keepalive: Argo 节点守护已自动重启 (PID $pid)"
+}
+
 start_agent() {
     if [ ! -r "$AGENT_ENV" ]; then
         log "agent down but $AGENT_ENV is missing; cannot restart"
@@ -133,6 +150,12 @@ check_once() {
     else
         log "telegram bot is down, restarting..."
         start_bot
+    fi
+    if pid="$(argo_pid)"; then
+        :
+    else
+        log "argo-node is down, restarting..."
+        start_argo
     fi
 }
 

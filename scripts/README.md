@@ -108,7 +108,43 @@ KOMARI_EXTRA_ARGS=--disable-web-ssh
 
 **边界**：看门狗只能保证"容器存活期间"进程不掉；容器被回收、看门狗自身被杀，都无法自愈。它不是 systemd，也不能让 Cline 会话本身常驻。
 
+## Argo 代理节点（Xray VLESS/WS + Cloudflare Quick Tunnel）
+
+在无 root 的沙盒里运行 Xray 服务端，通过 Cloudflare Quick Tunnel 暴露，并自动生成 vless:// 链接和 base64 订阅。
+
+```
+Xray (VLESS+WS 127.0.0.1:10000) <-- cloudflared --> https://xxx.trycloudflare.com
+Python HTTP (订阅目录 127.0.0.1:18080) <-- cloudflared --> https://yyy.trycloudflare.com/sub.txt
+```
+
+| 文件 | 说明 |
+|---|---|
+| `scripts/argo-node.sh` | 启动/守护 Xray、两条 cloudflared 隧道、订阅 HTTP 服务；域名变化时重建链接并推送 Telegram |
+| `~/.config/komari/argo/xray-server.json` | Xray 服务端配置（UUID 在里面，`chmod 600`） |
+| `~/.local/state/komari/argo-sub/vless.txt` | 当前直连节点链接 |
+| `~/.local/state/komari/argo-sub/sub.txt` | 当前 base64 订阅内容 |
+| `~/.local/state/komari/argo-sub/url` | 当前订阅 URL |
+
+查看/使用：
+
+```bash
+cat ~/.local/state/komari/argo-sub/url    # 订阅链接
+cat ~/.local/state/komari/argo-sub/vless.txt  # 直连 vless:// 链接
+
+./scripts/argo-node.sh --once   # 检查并重建
+tail -f ~/.local/state/komari/argo.log
+```
+
+客户端（Xray 内核，如 v2rayN / NekoRay / Shadowrocket）直接添加订阅 URL，或导入 vless:// 链接。节点参数：`VLESS + TLS + WebSocket`，端口 `443`，路径 `/argo`，SNI/Host 为 `*.trycloudflare.com` 域名，`fp=chrome`。
+
+**限制与注意**：
+- Quick Tunnel 域名在 cloudflared 重启后会变化，`argo-node.sh` 会自动重建订阅并通过 Telegram 推送新链接。
+- 这是 Cloudflare 的临时隧道，适合测试/临时使用，不建议作为长期生产节点；长期稳定需要你自己的域名 + 命名隧道（`cloudflared tunnel create` + DNS 路由），或直接部署到 VPS。
+- 带宽、连接数受沙盒和 Quick Tunnel 限制；容器回收后节点失效。
+- UUID 就是节点密码，不要提交到公开仓库；泄露后删除 `xray-server.json` 和 `uuid` 重新运行即可轮换。
+
 ## SSH 访问（无 root 用户态方案）
+
 
 沙盒里没有 `sshd` 也没有 `sudo`，因此用 `asyncssh` 起一个**用户态 SSH 服务端**，再通过 `bore.pub` 反向隧道暴露：
 
