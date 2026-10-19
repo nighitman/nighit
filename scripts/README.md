@@ -113,14 +113,18 @@ KOMARI_EXTRA_ARGS=--disable-web-ssh
 在无 root 的沙盒里运行 Xray 服务端，通过 Cloudflare Quick Tunnel 暴露，并自动生成 vless:// 链接和 base64 订阅。
 
 ```
-Xray (VLESS+WS 127.0.0.1:10000) <-- cloudflared --> https://xxx.trycloudflare.com
-Python HTTP (订阅目录 127.0.0.1:18080) <-- cloudflared --> https://yyy.trycloudflare.com/sub.txt
+Caddy (:10000) --/argo*--> Xray VLESS/WS (127.0.0.1:10001)
+               --/sub.txt--> 订阅文件
+        ^
+        | cloudflared 命名隧道 / 临时隧道
+https://cline.mailking.dpdns.org
 ```
 
 | 文件 | 说明 |
 |---|---|
-| `scripts/argo-node.sh` | 启动/守护 Xray、两条 cloudflared 隧道、订阅 HTTP 服务；域名变化时重建链接并推送 Telegram |
-| `~/.config/komari/argo/xray-server.json` | Xray 服务端配置（UUID 在里面，`chmod 600`） |
+| `scripts/argo-node.sh` | 启动/守护 Xray、Caddy、隧道；域名或链接变化时推送 Telegram |
+| `~/.config/komari/argo/xray-server.json` | Xray 服务端配置（UUID 在里面，`chmod 600`；监听 10001） |
+| `~/.config/komari/argo/Caddyfile` | 10000 端口分流：`/argo` → Xray，`/sub.txt` → 订阅文件 |
 | `~/.local/state/komari/argo-sub/vless.txt` | 当前直连节点链接 |
 | `~/.local/state/komari/argo-sub/sub.txt` | 当前 base64 订阅内容 |
 | `~/.local/state/komari/argo-sub/url` | 当前订阅 URL |
@@ -147,17 +151,18 @@ chmod 600 ~/.config/komari/argo/tunnel.token
 
 cat > ~/.config/komari/argo/named.env <<'EOF'
 NAMED_HOST=cline.mailking.dpdns.org
-# 可选：订阅域名（需在隧道里添加 Public Hostname -> 127.0.0.1:18080）
-# NAMED_SUB_HOST=argo.mailking.dpdns.org
+# 订阅与节点同域名，由 Caddy 分流 /sub.txt
+NAMED_SUB_HOST=cline.mailking.dpdns.org
 EOF
 ```
 
-隧道 Public Hostname 对应关系：
+隧道只需要一个 Public Hostname：
 
 | 域名 | 服务 |
 |---|---|
-| `cline.mailking.dpdns.org` | `http://127.0.0.1:10000` |
-| `argo.mailking.dpdns.org`（可选） | `http://127.0.0.1:18080` |
+| `cline.mailking.dpdns.org` | `http://127.0.0.1:10000`（Caddy） |
+
+Caddy 再分流 `/argo*` → `127.0.0.1:10001`（Xray），`/sub.txt` → 订阅文件。
 
 DNS 必须是 **Proxied CNAME** 指向 `<tunnel-id>.cfargotunnel.com`；如果指向源站 IP 会返回 522。
 

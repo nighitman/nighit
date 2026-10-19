@@ -13,6 +13,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARGO_DIR="${ARGO_DIR:-$HOME/.local/opt/argo}"
 XRAY="${XRAY:-$ARGO_DIR/xray}"
 CF="${CF:-$ARGO_DIR/cloudflared}"
+CADDY="${CADDY:-$HOME/.local/opt/caddy/caddy}"
+CADDYFILE="${CADDYFILE:-$HOME/.config/komari/argo/Caddyfile}"
 CONFIG="${XRAY_CONFIG:-$HOME/.config/komari/argo/xray-server.json}"
 TOKEN_FILE="${TUNNEL_TOKEN_FILE:-$HOME/.config/komari/argo/tunnel.token}"
 NAMED_ENV="${NAMED_ENV:-$HOME/.config/komari/argo/named.env}"
@@ -84,6 +86,23 @@ ensure_xray() {
         return 1
     fi
     log "xray started"
+}
+
+ensure_caddy() {
+    if pgrep -f 'caddy run --config .*Caddyfile' >/dev/null 2>&1; then
+        return 0
+    fi
+    if [ ! -x "$CADDY" ]; then
+        log "caddy binary missing: $CADDY"
+        return 1
+    fi
+    setsid nohup "$CADDY" run --config "$CADDYFILE" >> "$STATE_DIR/caddy.log" 2>&1 < /dev/null &
+    sleep 2
+    if ! pgrep -f 'caddy run --config .*Caddyfile' >/dev/null 2>&1; then
+        log "caddy failed to start"
+        return 1
+    fi
+    log "caddy started (10000 -> /argo:10001, /sub.txt static)"
 }
 
 ensure_named_tunnel() {
@@ -195,15 +214,13 @@ print_links() {
 check_once() {
     ensure_config || return 1
     ensure_xray || return 1
+    ensure_caddy || return 1
 
     if [ -s "$TOKEN_FILE" ] && [ -n "$NAMED_HOST" ]; then
         ensure_named_tunnel || return 1
         stop_quick_tunnels
         printf '%s\n' "$NAMED_HOST" > "$STATE_DIR/argo-host"
         printf '%s\n' "$NAMED_SUB_HOST" > "$STATE_DIR/argo-sub-host"
-        if [ -n "$NAMED_SUB_HOST" ]; then
-            ensure_http || true
-        fi
         write_links
         return $?
     fi
