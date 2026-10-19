@@ -137,6 +137,30 @@ tail -f ~/.local/state/komari/argo.log
 
 客户端（Xray 内核，如 v2rayN / NekoRay / Shadowrocket）直接添加订阅 URL，或导入 vless:// 链接。节点参数：`VLESS + TLS + WebSocket`，端口 `443`，路径 `/argo`，SNI/Host 为 `*.trycloudflare.com` 域名，`fp=chrome`。
 
+### 命名隧道模式（固定域名）
+
+如果存在 `~/.config/komari/argo/tunnel.token`，`argo-node.sh` 会优先使用 Cloudflare 命名隧道，不再创建 `trycloudflare.com` 临时域名：
+
+```bash
+# token 来自 Zero Trust -> Networks -> Tunnels -> Install connector
+chmod 600 ~/.config/komari/argo/tunnel.token
+
+cat > ~/.config/komari/argo/named.env <<'EOF'
+NAMED_HOST=cline.mailking.dpdns.org
+# 可选：订阅域名（需在隧道里添加 Public Hostname -> 127.0.0.1:18080）
+# NAMED_SUB_HOST=argo.mailking.dpdns.org
+EOF
+```
+
+隧道 Public Hostname 对应关系：
+
+| 域名 | 服务 |
+|---|---|
+| `cline.mailking.dpdns.org` | `http://127.0.0.1:10000` |
+| `argo.mailking.dpdns.org`（可选） | `http://127.0.0.1:18080` |
+
+DNS 必须是 **Proxied CNAME** 指向 `<tunnel-id>.cfargotunnel.com`；如果指向源站 IP 会返回 522。
+
 **限制与注意**：
 - Quick Tunnel 域名在 cloudflared 重启后会变化，`argo-node.sh` 会自动重建订阅并通过 Telegram 推送新链接。
 - 这是 Cloudflare 的临时隧道，适合测试/临时使用，不建议作为长期生产节点；长期稳定需要你自己的域名 + 命名隧道（`cloudflared tunnel create` + DNS 路由），或直接部署到 VPS。

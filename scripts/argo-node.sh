@@ -14,6 +14,14 @@ ARGO_DIR="${ARGO_DIR:-$HOME/.local/opt/argo}"
 XRAY="${XRAY:-$ARGO_DIR/xray}"
 CF="${CF:-$ARGO_DIR/cloudflared}"
 CONFIG="${XRAY_CONFIG:-$HOME/.config/komari/argo/xray-server.json}"
+TOKEN_FILE="${TUNNEL_TOKEN_FILE:-$HOME/.config/komari/argo/tunnel.token}"
+NAMED_ENV="${NAMED_ENV:-$HOME/.config/komari/argo/named.env}"
+if [ -f "$NAMED_ENV" ]; then
+    # shellcheck source=/dev/null
+    . "$NAMED_ENV"
+fi
+NAMED_HOST="${NAMED_HOST:-}"
+NAMED_SUB_HOST="${NAMED_SUB_HOST:-}"
 UUID_FILE="$HOME/.config/komari/argo/uuid"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/komari"
 SUB_DIR="$STATE_DIR/argo-sub"
@@ -78,6 +86,32 @@ ensure_xray() {
     log "xray started"
 }
 
+ensure_named_tunnel() {
+    if pgrep -f 'cloudflared tunnel run --token-file .*tunnel\.token' >/dev/null 2>&1; then
+        return 0
+    fi
+    : > "$STATE_DIR/argo-named-cf.log"
+    setsid nohup "$CF" tunnel run --token-file "$TOKEN_FILE" \
+        >> "$STATE_DIR/argo-named-cf.log" 2>&1 < /dev/null &
+    local i
+    for i in $(seq 1 20); do
+        sleep 1
+        if grep -q 'Registered tunnel connection' "$STATE_DIR/argo-named-cf.log" 2>/dev/null; then
+            log "named tunnel connected"
+            return 0
+        fi
+    done
+    log "named tunnel failed to connect"
+    return 1
+}
+
+stop_quick_tunnels() {
+    local p
+    for p in $(ps -C cloudflared -o pid=,args= | awk '/tunnel --url http:\/\/127\.0\.0\.1:(10000|18080)/ {print $1}'); do
+        kill "$p" 2>/dev/null
+    done
+}
+
 # start_cf <target-url> <logfile> <hostfile> <match-pattern>
 start_cf() {
     local target="$1" logfile="$2" hostfile="$3" pattern="$4" host=""
@@ -122,7 +156,7 @@ ensure_http() {
 }
 
 write_links() {
-    local host subhost uuid link suburl signature previous
+    local host subhost uuid link suburl signature previous sub_line=""
     host="$(cat "$STATE_DIR/argo-host" 2>/dev/null || true)"
     subhost="$(cat "$STATE_DIR/argo-sub-host" 2>/dev/null || true)"
     uuid="$(cat "$UUID_FILE")"
@@ -135,8 +169,10 @@ write_links() {
     if [ -n "$subhost" ]; then
         suburl="https://${subhost}/sub.txt"
         printf '%s\n' "$suburl" > "$SUB_DIR/url"
+        sub_line="订阅链接: ${suburl}"$'\n'
     else
-        suburl="(subscription host not ready)"
+        suburl="none"
+        rm -f "$SUB_DIR/url"
     fi
 
     signature="${host}|${suburl}"
@@ -144,11 +180,10 @@ write_links() {
     if [ "$signature" != "$previous" ]; then
         printf '%s\n' "$signature" > "$STATE_DIR/argo-links.sig"
         notify "🛰 Argo 节点已就绪
-订阅链接: ${suburl}
-直连节点: ${link}
+${sub_line}直连节点: ${link}
 
-提示: Quick Tunnel 的域名在隧道重启后会变化，以最新消息为准。"
-        log "links updated: ${suburl}"
+提示: 节点域名为固定域名，隧道重连后链接不变。"
+        log "links updated: host=${host} sub=${suburl}"
     fi
 }
 
@@ -160,6 +195,19 @@ print_links() {
 check_once() {
     ensure_config || return 1
     ensure_xray || return 1
+
+    if [ -s "$TOKEN_FILE" ] && [ -n "$NAMED_HOST" ]; then
+        ensure_named_tunnel || return 1
+        stop_quick_tunnels
+        printf '%s\n' "$NAMED_HOST" > "$STATE_DIR/argo-host"
+        printf '%s\n' "$NAMED_SUB_HOST" > "$STATE_DIR/argo-sub-host"
+        if [ -n "$NAMED_SUB_HOST" ]; then
+            ensure_http || true
+        fi
+        write_links
+        return $?
+    fi
+
     start_cf "http://127.0.0.1:10000" "$STATE_DIR/argo-cf.log" \
         "$STATE_DIR/argo-host" 'cloudflared tunnel --url http://127\.0\.0\.1:10000' || return 1
     ensure_http || return 1
