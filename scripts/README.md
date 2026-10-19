@@ -48,7 +48,42 @@ curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates" \
 
 `komari-watch.sh` 的退出码：`0` 健康、`1` 发现异常、`2` 推送失败。
 
+## 命令 Bot（双向）
+
+`telegram-bot.py` 用 long polling 接收消息并回复命令，只响应 `TELEGRAM_CHAT_ID` 对应的聊天，其他人发消息会被忽略。
+
+```bash
+# 处理一次积压消息后退出（调试用）
+python3 scripts/telegram-bot.py --once
+
+# 后台常驻
+mkdir -p ~/.local/state/komari
+setsid nohup python3 /workspace/scripts/telegram-bot.py \
+  >> ~/.local/state/komari/bot.log 2>&1 < /dev/null &
+echo $! > ~/.local/state/komari/bot.pid
+
+# 停止
+kill "$(cat ~/.local/state/komari/bot.pid)"
+```
+
+支持的命令：
+
+| 命令 | 作用 |
+|---|---|
+| `/status` | agent 进程、面板连通性、WebSocket、磁盘、内存 |
+| `/disk` | `/` 和 `/workspace` 占用 |
+| `/mem` | 内存使用率 |
+| `/ping` | 面板连通性和耗时 |
+| `/log [n]` | 最近 n 行 agent 日志（默认 15，最多 60） |
+| `/id` | 当前 chat_id |
+| `/help` | 帮助 |
+
+已读位置保存在 `~/.local/state/komari/bot.offset`，重启不会重复回复旧消息。
+
+> 这是命令 bot，不接 LLM，所以不支持自由对话；未知文本会回复命令提示。
+
 ## 定时执行
+
 
 crontab（每分钟巡检一次，仅在状态变化时发消息）：
 
