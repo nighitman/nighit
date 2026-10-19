@@ -82,7 +82,34 @@ kill "$(cat ~/.local/state/komari/bot.pid)"
 
 > 这是命令 bot，不接 LLM，所以不支持自由对话；未知文本会回复命令提示。
 
+## 进程保活（看门狗）
+
+`keepalive.sh` 每 60 秒检查 Komari agent 和 Telegram bot，发现掉线就自动拉起，并（限频）发 Telegram 通知。
+
+```bash
+# 检查一次
+./scripts/keepalive.sh --once
+
+# 后台常驻
+setsid nohup /workspace/scripts/keepalive.sh >/dev/null 2>&1 < /dev/null &
+echo $! > ~/.local/state/komari/keepalive.pid
+
+# 查看日志
+tail -f ~/.local/state/komari/keepalive.log
+```
+
+重启 agent 所需的端点/密钥放在 `~/.config/komari/agent.env`（`chmod 600`，不进仓库）：
+
+```bash
+KOMARI_ENDPOINT=https://komari.577591.xyz
+KOMARI_AUTO_DISCOVERY_KEY=...
+KOMARI_EXTRA_ARGS=--disable-web-ssh
+```
+
+**边界**：看门狗只能保证"容器存活期间"进程不掉；容器被回收、看门狗自身被杀，都无法自愈。它不是 systemd，也不能让 Cline 会话本身常驻。
+
 ## 定时执行
+
 
 
 crontab（每分钟巡检一次，仅在状态变化时发消息）：
