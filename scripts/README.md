@@ -108,7 +108,55 @@ KOMARI_EXTRA_ARGS=--disable-web-ssh
 
 **边界**：看门狗只能保证"容器存活期间"进程不掉；容器被回收、看门狗自身被杀，都无法自愈。它不是 systemd，也不能让 Cline 会话本身常驻。
 
+## SSH 访问（无 root 用户态方案）
+
+沙盒里没有 `sshd` 也没有 `sudo`，因此用 `asyncssh` 起一个**用户态 SSH 服务端**，再通过 `bore.pub` 反向隧道暴露：
+
+| 组件 | 作用 |
+|---|---|
+| `ssh-server.py` | 监听 `127.0.0.1:2222`，仅公钥认证，登录用户 `node`，支持 PTY shell / exec / SFTP / SCP |
+| `ssh-tunnel.sh` | 守护 SSH 服务端和 bore 隧道；隧道重启后端口会变，自动推送新命令到 Telegram |
+| `~/.config/komari/ssh_client_ed25519_key` | 客户端私钥（已通过 Telegram 发送一次） |
+| `~/.local/state/komari/ssh-port` | 当前公网端口 |
+
+客户端使用：
+
+```bash
+# 把 Telegram 收到的私钥保存为 ~/komari_sandbox_key
+chmod 600 ~/komari_sandbox_key
+
+# 连接（端口以 Telegram 最新消息 / ssh-port 文件为准）
+ssh -p <port> -i ~/komari_sandbox_key \
+  -o StrictHostKeyChecking=accept-new node@bore.pub
+
+# 传文件
+scp -P <port> -i ~/komari_sandbox_key ./file node@bore.pub:/workspace/
+```
+
+换成你自己的公钥（推荐）：
+
+```bash
+cat ~/.ssh/id_ed25519.pub >> ~/.config/komari/ssh_authorized_keys
+# 下次认证立即生效，无需重启
+```
+
+管理：
+
+```bash
+./scripts/ssh-tunnel.sh --once        # 启动/检查一次
+setsid nohup ./scripts/ssh-tunnel.sh >/dev/null 2>&1 < /dev/null &
+kill "$(cat ~/.local/state/komari/ssh-tunnel.pid)"
+tail -f ~/.local/state/komari/ssh-tunnel.log
+```
+
+**安全与限制**：
+- 仅公钥认证，没有密码登录；但**任何拿到私钥和端口的人都能登录**，泄露后请删除 `ssh_authorized_keys` 中的对应公钥并换 key。
+- 走第三方中继 `bore.pub`；SSH 本身端到端加密，中继看不到内容，但能看到连接元数据。
+- 端口每次隧道重启都会变化（固定端口在 bore.pub 上外网不可达），以 Telegram 推送为准。
+- 权限是普通用户 `node`，不是 root；容器被回收后 SSH 也会一并消失。
+
 ## 定时执行
+
 
 
 
