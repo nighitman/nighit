@@ -11,9 +11,4 @@ watch.state
 # Dependencies / caches
 node_modules/
 __pycache__/
-
-# QwenPaw trial install (local only, never commit)
-.qp-venv/
-.qpdata/
-.qpdata.secret/
 .DS_Store
